@@ -28,13 +28,9 @@ echo "=== Building ${BIN_NAME} v${VERSION} ==="
 DIST_DIR="dist"
 mkdir -p "${DIST_DIR}"
 
-if [ -f "target/release/${BIN_NAME}" ]; then
-    echo "=== Using existing binary from target/release/ ==="
-    cp "target/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"
-else
-    cargo build --release --target "${TARGET}"
-    cp "target/${TARGET}/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"
-fi
+# Always rebuild — version must match Cargo.toml
+cargo build --release --target "${TARGET}"
+cp "target/${TARGET}/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"
 
 echo "=== Preparing checksum ==="
 cd "${DIST_DIR}"

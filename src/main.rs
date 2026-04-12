@@ -19,16 +19,17 @@ fn real_main() -> eframe::Result<()> {
         )
         .init();
 
+    let app_title = format!("Par2Dialog v{}", env!("CARGO_PKG_VERSION"));
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 750.0])
             .with_min_inner_size([800.0, 550.0])
-            .with_title("Par2Dialog"),
+            .with_title(&app_title),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Par2Dialog",
+        &app_title,
         native_options,
         Box::new(|cc| Ok(Box::new(app::ParParApp::new(cc)))),
     )

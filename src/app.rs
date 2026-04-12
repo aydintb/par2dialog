@@ -49,6 +49,11 @@ impl eframe::App for ParParApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🛡️ Par2Dialog");
+                ui.label(
+                    egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                        .size(11.0)
+                        .color(ui.visuals().weak_text_color()),
+                );
                 ui.separator();
                 ui.label(egui::RichText::new("PAR2 GUI").size(12.0).color(ui.visuals().weak_text_color()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

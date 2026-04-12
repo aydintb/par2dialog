@@ -1,6 +1,6 @@
 [package]
 name = "par2dialog"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A modern cross-platform PAR2 GUI application built with egui"
 license = "MIT OR Apache-2.0"

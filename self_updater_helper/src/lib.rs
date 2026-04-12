@@ -75,13 +75,18 @@ pub fn run_update(config: &UpdaterConfig) -> Result<UpdateResult, Box<dyn std::e
 fn restart_process(exe: &std::path::Path) {
     #[cfg(unix)]
     {
-        let err = std::process::Command::new(exe).exec();
+        // Skip update check in the new process to avoid infinite loop
+        let err = std::process::Command::new(exe)
+            .env("PAR2DIALOG_SKIP_UPDATE", "1")
+            .exec();
         eprintln!("Failed to exec new process: {}", err);
         std::process::exit(1);
     }
     #[cfg(windows)]
     {
-        std::process::Command::new(exe).spawn().expect("failed to spawn update process");
+        let mut cmd = std::process::Command::new(exe);
+        cmd.env("PAR2DIALOG_SKIP_UPDATE", "1");
+        cmd.spawn().expect("failed to spawn update process");
         std::process::exit(0);
     }
 }

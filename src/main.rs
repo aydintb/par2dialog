@@ -35,16 +35,21 @@ fn real_main() -> eframe::Result<()> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = UpdaterConfig {
-        owner: "aydintb".into(),
-        repo: "par2dialog".into(),
-        bin_name: "par2dialog".into(),
-        current_version: env!("CARGO_PKG_VERSION").into(),
-        ..Default::default()
-    };
+    // Skip update check if we just self-updated (set in restart_process)
+    let skip_update = std::env::var("PAR2DIALOG_SKIP_UPDATE") == Ok("1".to_string());
 
-    if let Err(e) = run_update(&config) {
-        eprintln!("Update check failed: {e} (app will continue normally)");
+    if !skip_update {
+        let config = UpdaterConfig {
+            owner: "aydintb".into(),
+            repo: "par2dialog".into(),
+            bin_name: "par2dialog".into(),
+            current_version: env!("CARGO_PKG_VERSION").into(),
+            ..Default::default()
+        };
+
+        if let Err(e) = run_update(&config) {
+            eprintln!("Update check failed: {e} (app will continue normally)");
+        }
     }
 
     real_main()?;

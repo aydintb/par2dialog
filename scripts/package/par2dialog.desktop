@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Par2Dialog
+Comment=A modern cross-platform PAR2 GUI application
+Exec=par2dialog %f
+Icon=par2dialog
+Terminal=false
+Categories=Utility;Archiving;FileTools;
+Keywords=par2;repair;verify;recovery;parity;
+MimeType=application/x-par2;

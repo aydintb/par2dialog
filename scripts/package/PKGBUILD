@@ -1,0 +1,27 @@
+# Maintainer: Your Name <your@email.com>
+# Contributor: Your Name <your@email.com>
+
+pkgname=par2dialog
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A modern cross-platform PAR2 GUI application built with Rust and egui"
+arch=('x86_64')
+url="https://github.com/atb/par2dialog"
+license=('MIT' 'Apache')
+depends=('par2cmdline')
+makedepends=('rust' 'cargo')
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/atb/par2dialog/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/${pkgname}-${pkgver}"
+    cargo build --release --locked
+}
+
+package() {
+    cd "${srcdir}/${pkgname}-${pkgver}"
+    install -Dm755 "target/release/par2dialog" "${pkgdir}/usr/bin/par2dialog"
+    install -Dm644 "scripts/package/par2dialog.desktop" "${pkgdir}/usr/share/applications/par2dialog.desktop"
+    install -Dm644 "assets/icon.png" "${pkgdir}/usr/share/pixmaps/par2dialog.png"
+    install -Dm644 "LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

@@ -25,15 +25,13 @@ TAG="v${VERSION}"
 ASSET_NAME="${BIN_NAME}-${TARGET}"
 
 echo "=== Building ${BIN_NAME} v${VERSION} ==="
-if [ -f "target/${TARGET}/release/${BIN_NAME}" ]; then
-    echo "=== Using existing binary ==="
+if [ -f "target/release/${BIN_NAME}" ]; then
+    echo "=== Using existing binary from target/release/ ==="
+    cp "target/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"
 else
     cargo build --release --target "${TARGET}"
+    cp "target/${TARGET}/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"
 fi
-
-DIST_DIR="dist"
-mkdir -p "${DIST_DIR}"
-cp "target/${TARGET}/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"
 
 echo "=== Preparing checksum ==="
 cd "${DIST_DIR}"

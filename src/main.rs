@@ -43,9 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    run_update(&config)?;
-
-    println!("App running...");
+    if let Err(e) = run_update(&config) {
+        eprintln!("Update check failed: {e} (app will continue normally)");
+    }
 
     real_main()?;
     Ok(())

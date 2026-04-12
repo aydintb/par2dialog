@@ -109,21 +109,6 @@ impl CreateTab {
                 .default_open(true)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Output PAR2 file:");
-                        if ui.button("📂 Browse").clicked() {
-                            if let Some(path) = save_file_dialog("Save PAR2 file as", Some("par2"), None) {
-                                self.output_path = path;
-                            }
-                        }
-                    });
-                    ui.label(
-                        egui::RichText::new(&self.output_path.to_string_lossy().to_string())
-                            .size(11.0)
-                            .italics()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    ui.separator();
-                    ui.horizontal(|ui| {
                         ui.label("Data files to protect:");
                         if ui.button("➕ Add Files").clicked() {
                             let files = pick_files_dialog("Select data files", None);
@@ -185,6 +170,23 @@ impl CreateTab {
                             }
                         });
                     }
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        ui.label("Output PAR2 file:");
+                        if ui.button("📂 Browse").clicked() {
+                            if let Some(path) = save_file_dialog("Save PAR2 file as", Some("par2"), None) {
+                                self.output_path = path;
+                            }
+                        }
+                    });
+                    ui.label(
+                        egui::RichText::new(&self.output_path.to_string_lossy().to_string())
+                            .size(11.0)
+                            .italics()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                 });
 
             // ── Redundancy ──

@@ -48,7 +48,10 @@ impl Default for VerifyTab {
 }
 
 impl VerifyTab {
-    pub fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
+    /// Returns true if the user clicked "Switch to Repair"
+    pub fn ui(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) -> bool {
+        let mut repair_requested = false;
+
         // Poll worker
         if self.is_running {
             if let Some(worker) = &self.worker {
@@ -199,6 +202,18 @@ impl VerifyTab {
                     ui.separator();
                     ui.label(egui::RichText::new(summary).size(12.0));
                 }
+
+                // Show repair button if damage detected
+                let has_damage = self.status_list.files.iter()
+                    .any(|f| matches!(f.status, crate::par2::types::FileStatus::Damaged | crate::par2::types::FileStatus::Missing));
+                if has_damage {
+                    ui.horizontal(|ui| {
+                        if ui.button(egui::RichText::new("🔧 Switch to Repair").size(14.0)).clicked() {
+                            repair_requested = true;
+                        }
+                    });
+                }
+
                 ui.horizontal(|ui| {
                     if ui.small_button("🔄 Clear Results").clicked() {
                         self.status_list.files.clear();
@@ -207,6 +222,8 @@ impl VerifyTab {
                 });
             }
         });
+
+        repair_requested
     }
 
     fn start_verify(&mut self) {

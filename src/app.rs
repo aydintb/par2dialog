@@ -17,6 +17,12 @@ enum ActiveTab {
     Settings,
 }
 
+/// Signal from verify/repair tabs to switch to repair with a pre-filled path
+struct RepairRequest {
+    pub par2_path: std::path::PathBuf,
+    pub data_dir: std::path::PathBuf,
+}
+
 pub struct ParParApp {
     active_tab: ActiveTab,
     dark_mode: bool,
@@ -25,6 +31,7 @@ pub struct ParParApp {
     repair_tab: RepairTab,
     batch_tab: BatchTab,
     settings_tab: SettingsTab,
+    repair_request: Option<RepairRequest>,
 }
 
 impl ParParApp {
@@ -40,6 +47,7 @@ impl ParParApp {
             repair_tab: RepairTab::default(),
             batch_tab: BatchTab::default(),
             settings_tab: SettingsTab::default(),
+            repair_request: None,
         }
     }
 }
@@ -76,8 +84,24 @@ impl eframe::App for ParParApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.active_tab {
                 ActiveTab::Create => self.create_tab.ui(ui, ctx),
-                ActiveTab::Verify => self.verify_tab.ui(ui, ctx),
-                ActiveTab::Repair => self.repair_tab.ui(ui, ctx),
+                ActiveTab::Verify => {
+                    let repair_requested = self.verify_tab.ui(ui, ctx);
+                    if repair_requested {
+                        self.repair_request = Some(RepairRequest {
+                            par2_path: self.verify_tab.par2_path.clone(),
+                            data_dir: self.verify_tab.data_dir.clone(),
+                        });
+                        self.active_tab = ActiveTab::Repair;
+                    }
+                }
+                ActiveTab::Repair => {
+                    // If coming from verify with a repair request, pre-fill
+                    if let Some(req) = self.repair_request.take() {
+                        self.repair_tab.par2_path = req.par2_path;
+                        self.repair_tab.data_dir = req.data_dir;
+                    }
+                    self.repair_tab.ui(ui, ctx);
+                }
                 ActiveTab::Batch => self.batch_tab.ui(ui, ctx),
                 ActiveTab::Settings => self.settings_tab.ui(ui, ctx),
             }

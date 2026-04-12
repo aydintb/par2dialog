@@ -131,6 +131,14 @@ impl CreateTab {
                         }
                         if ui.button("📁 Add Directory").clicked() {
                             if let Some(dir) = pick_directory_dialog("Select data directory") {
+                                // Auto-set output to dir_name.par2 inside the directory
+                                if self.output_path.as_os_str().is_empty() {
+                                    if let Some(dir_name) = dir.file_name() {
+                                        self.output_path = dir.join(format!("{}.par2", dir_name.to_string_lossy()));
+                                    } else {
+                                        self.output_path = dir.join("output.par2");
+                                    }
+                                }
                                 if let Ok(entries) = std::fs::read_dir(&dir) {
                                     for entry in entries.flatten() {
                                         if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
@@ -145,6 +153,18 @@ impl CreateTab {
                         }
                     });
                     if !self.data_files.is_empty() {
+                        // Auto-set output path if not already set
+                        if self.output_path.as_os_str().is_empty() {
+                            if let Some(first_file) = self.data_files.first() {
+                                if let Some(parent) = first_file.parent() {
+                                    let name = first_file.file_stem()
+                                        .map(|s| s.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "output".to_string());
+                                    self.output_path = parent.join(format!("{name}.par2"));
+                                }
+                            }
+                        }
+
                         let total_size: u64 = self.data_files.iter()
                             .filter_map(|f| f.metadata().ok().map(|m| m.len()))
                             .sum();

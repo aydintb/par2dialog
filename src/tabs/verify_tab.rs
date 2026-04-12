@@ -92,6 +92,38 @@ impl VerifyTab {
                             .color(ui.visuals().weak_text_color()),
                     );
 
+                    // Show discovered related PAR2 files
+                    if !self.par2_path.as_os_str().is_empty() {
+                        if let Some(parent) = self.par2_path.parent() {
+                            if let Ok(entries) = std::fs::read_dir(parent) {
+                                let related: Vec<_> = entries
+                                    .filter_map(|e| e.ok())
+                                    .map(|e| e.path())
+                                    .filter(|p| {
+                                        p.extension().and_then(|e| e.to_str()) == Some("par2")
+                                            && p != &self.par2_path
+                                    })
+                                    .collect();
+                                if !related.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "🔗 Found {} related PAR2 files in same directory",
+                                            related.len()
+                                        ))
+                                        .size(11.0)
+                                        .italics()
+                                        .color(egui::Color32::LIGHT_BLUE),
+                                    );
+                                    egui::ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
+                                        for p in &related {
+                                            ui.label(egui::RichText::new(p.to_string_lossy()).size(10.0).family(egui::FontFamily::Monospace));
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+
                     ui.separator();
 
                     ui.horizontal(|ui| {

@@ -9,11 +9,11 @@ use crate::par2::types::{CreateConfig, ProgressUpdate};
 
 /// Find par2cmdline in PATH
 pub fn find_par2cmdline() -> Option<String> {
-    which::which("par2cmdline")
+    which::which("par2")
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .or_else(|| {
-            which::which("par2")
+            which::which("par2cmdline")
                 .ok()
                 .and_then(|p| p.to_str().map(|s| s.to_string()))
         })

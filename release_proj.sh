@@ -25,7 +25,11 @@ TAG="v${VERSION}"
 ASSET_NAME="${BIN_NAME}-${TARGET}"
 
 echo "=== Building ${BIN_NAME} v${VERSION} ==="
-cargo build --release --target "${TARGET}"
+if [ -f "target/${TARGET}/release/${BIN_NAME}" ]; then
+    echo "=== Using existing binary ==="
+else
+    cargo build --release --target "${TARGET}"
+fi
 
 DIST_DIR="dist"
 mkdir -p "${DIST_DIR}"

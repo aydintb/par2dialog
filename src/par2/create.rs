@@ -24,12 +24,6 @@ fn build_args(config: &CreateConfig) -> Vec<String> {
     let mut args = Vec::new();
     args.push("create".to_string());
 
-    // Main PAR2 archive name
-    if let Some(main_name) = config.output_path.file_stem() {
-        args.push("-a".to_string());
-        args.push(main_name.to_string_lossy().to_string());
-    }
-
     // Block size or block count
     if config.block_size > 0 {
         args.push(format!("-s{}", config.block_size));
@@ -107,6 +101,11 @@ fn build_args(config: &CreateConfig) -> Vec<String> {
             args.push("-B".to_string());
             args.push(s.to_string());
         }
+    }
+
+    // PAR2 output file (positional, first unflagged arg)
+    if let Some(s) = config.output_path.to_str() {
+        args.push(s.to_string());
     }
 
     // Data files

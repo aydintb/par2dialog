@@ -6,7 +6,7 @@ use eframe::egui;
 use crate::par2::create;
 use crate::par2::types::{CreateConfig, RedundancyMode, RecoveryFileMode, SizeUnit};
 use crate::theme;
-use crate::widgets::file_picker::{pick_files_dialog, pick_file_dialog, pick_directory_dialog};
+use crate::widgets::file_picker::{pick_files_dialog, pick_directory_dialog, save_file_dialog};
 use crate::widgets::progress::ProgressBar;
 
 struct CreateWorker {
@@ -111,7 +111,7 @@ impl CreateTab {
                     ui.horizontal(|ui| {
                         ui.label("Output PAR2 file:");
                         if ui.button("📂 Browse").clicked() {
-                            if let Some(path) = pick_file_dialog("Select output PAR2 file", Some("*.par2")) {
+                            if let Some(path) = save_file_dialog("Save PAR2 file as", Some("par2"), None) {
                                 self.output_path = path;
                             }
                         }

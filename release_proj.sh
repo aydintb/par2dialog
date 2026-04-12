@@ -25,6 +25,9 @@ TAG="v${VERSION}"
 ASSET_NAME="${BIN_NAME}-${TARGET}"
 
 echo "=== Building ${BIN_NAME} v${VERSION} ==="
+DIST_DIR="dist"
+mkdir -p "${DIST_DIR}"
+
 if [ -f "target/release/${BIN_NAME}" ]; then
     echo "=== Using existing binary from target/release/ ==="
     cp "target/release/${BIN_NAME}" "${DIST_DIR}/${ASSET_NAME}"

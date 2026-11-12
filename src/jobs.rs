@@ -1,11 +1,15 @@
-//! Generic background-job abstraction.
+//! Generic background-job abstraction with cooperative cancellation.
 //!
 //! Every long-running operation (create / verify / repair / batch) runs on its
 //! own thread and reports progress through a shared [`Job`]. The UI thread
-//! polls the job every frame — it never blocks.
+//! polls the job every frame — it never blocks. [`Job::cancel`] sets a flag
+//! the job thread (and any spawned subprocess) observes.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Message produced by jobs that were stopped through [`Job::cancel`].
+pub const CANCELLED: &str = "Operation cancelled.";
 
 /// Current progress state of a job.
 #[derive(Debug, Clone)]
@@ -29,21 +33,52 @@ impl Progress {
 #[derive(Clone)]
 pub struct Reporter {
     progress: Arc<Mutex<Progress>>,
+    cancel: Arc<AtomicBool>,
+    /// When set, reports are written to stdout as worker-protocol lines
+    /// (see `crate::worker`) instead of updating shared state.
+    worker_mode: bool,
 }
 
 impl Reporter {
+    fn new(worker_mode: bool) -> Self {
+        Self {
+            progress: Arc::new(Mutex::new(Progress::new(""))),
+            cancel: Arc::new(AtomicBool::new(false)),
+            worker_mode,
+        }
+    }
+
     /// Report the current progress.
     pub fn report(&self, pct: f32, message: impl Into<String>) {
+        let message = message.into();
+        if self.worker_mode {
+            // Worker protocol line, parsed by the parent process.
+            println!("PROGRESS\t{pct:.1}\t{message}");
+            return;
+        }
         let mut progress = self.progress.lock().unwrap();
         progress.pct = pct.clamp(0.0, 100.0);
-        progress.message = message.into();
+        progress.message = message;
+    }
+
+    /// Whether the UI requested cancellation of this job.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Shared flag used by process-based backends to observe cancellation.
+    pub(crate) fn cancel_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel)
+    }
+
+    /// Reporter for the headless worker subprocess (`--par2-worker`).
+    pub(crate) fn new_worker() -> Self {
+        Self::new(true)
     }
 
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
-        Self {
-            progress: Arc::new(Mutex::new(Progress::new(""))),
-        }
+        Self::new(false)
     }
 
     #[cfg(test)]
@@ -58,6 +93,7 @@ pub struct Job<T: Send + 'static> {
     /// Set by the job thread *after* the result is stored (release ordering
     /// guarantees the UI thread sees the result once `finished` is true).
     finished: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
     result: Arc<Mutex<Option<T>>>,
 }
 
@@ -69,9 +105,8 @@ impl<T: Send + 'static> Job<T> {
         let finished = Arc::new(AtomicBool::new(false));
         let result = Arc::new(Mutex::new(None));
 
-        let reporter = Reporter {
-            progress: Arc::clone(&progress),
-        };
+        let reporter = Reporter::new(false);
+        let cancel = Arc::clone(&reporter.cancel);
         let finished_thread = Arc::clone(&finished);
         let result_thread = Arc::clone(&result);
 
@@ -86,6 +121,7 @@ impl<T: Send + 'static> Job<T> {
         Self {
             progress,
             finished,
+            cancel,
             result,
         }
     }
@@ -108,5 +144,56 @@ impl<T: Send + 'static> Job<T> {
         } else {
             None
         }
+    }
+
+    /// Request cancellation. The job thread observes this through
+    /// `Reporter::is_cancelled` (and process-based backends kill their
+    /// subprocess with it). The result, once taken, carries the outcome.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether [`Job::cancel`] was called for this job.
+    pub fn was_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{Job, CANCELLED};
+
+    #[test]
+    fn cancel_flag_reaches_reporter_and_finishes_job() {
+        let job: Job<String> = Job::spawn("testing", |reporter| {
+            while !reporter.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            CANCELLED.to_string()
+        });
+        assert!(!job.was_cancelled());
+
+        job.cancel();
+        while job.is_running() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(job.take_result().as_deref(), Some(CANCELLED));
+        assert!(job.was_cancelled());
+    }
+
+    #[test]
+    fn cancel_on_finished_job_is_harmless() {
+        let job: Job<u32> = Job::spawn("testing", |reporter| {
+            reporter.report(100.0, "done");
+            42
+        });
+        while job.is_running() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        job.cancel();
+        assert_eq!(job.take_result(), Some(42));
+        assert!(job.was_cancelled());
     }
 }

@@ -380,6 +380,15 @@ impl CreateTab {
             if self.is_running() {
                 ui.spinner();
                 ui.label("Working...");
+                if ui
+                    .button("⏹ Stop")
+                    .on_hover_text("Kill the par2 process and cancel the operation")
+                    .clicked()
+                {
+                    if let Some(job) = &self.job {
+                        job.cancel();
+                    }
+                }
             }
         });
 
@@ -399,7 +408,17 @@ impl CreateTab {
             }
             Some(Err(msg)) => {
                 ui.add_space(6.0);
-                ui.colored_label(egui::Color32::RED, format!("❌ {msg}"));
+                if msg == crate::jobs::CANCELLED {
+                    ui.label(
+                        egui::RichText::new("⏹ Operation cancelled.")
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                    ui.label(theme::tooltip_text(
+                        "Partially written PAR2 files may remain in the output folder.",
+                    ));
+                } else {
+                    ui.colored_label(egui::Color32::RED, format!("❌ {msg}"));
+                }
                 if ui.small_button("🔄 Reset").clicked() {
                     self.done_result = None;
                 }

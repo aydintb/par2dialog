@@ -57,14 +57,16 @@ impl BatchTab {
     pub fn ui(&mut self, ui: &mut egui::Ui, _shared: &mut SharedState) {
         // Poll the background job.
         let mut finished = None;
+        let mut cancelled = false;
         if let Some(job) = &self.job {
             if !job.is_running() {
                 finished = job.take_result();
+                cancelled = job.was_cancelled();
             }
         }
         if let Some(outcomes) = finished {
             self.job = None;
-            self.apply_batch_results(outcomes);
+            self.apply_batch_results(&outcomes, cancelled);
         }
 
         let running = self.is_running();
@@ -86,7 +88,7 @@ impl BatchTab {
         });
     }
 
-    fn apply_batch_results(&mut self, outcomes: Vec<TaskOutcome>) {
+    fn apply_batch_results(&mut self, outcomes: &[TaskOutcome], cancelled: bool) {
         let succeeded = outcomes.iter().filter(|o| o.success).count();
         for (task, outcome) in self.tasks.iter_mut().zip(outcomes) {
             task.status = if outcome.success {
@@ -94,13 +96,24 @@ impl BatchTab {
             } else {
                 BatchStatus::Failed
             };
-            task.result = Some(outcome.summary);
+            task.result = Some(outcome.summary.clone());
         }
-        let failed = self.tasks.len() - succeeded;
-        self.last_summary = Some((
-            format!("Batch finished: {succeeded} succeeded, {failed} failed."),
-            failed == 0,
-        ));
+        // Tasks the batch never reached (cancelled run) go back to Pending.
+        let reached = outcomes.len();
+        for task in self.tasks.iter_mut().skip(reached) {
+            task.status = BatchStatus::Pending;
+            task.result = None;
+        }
+        let failed = reached.saturating_sub(succeeded);
+        let summary = if cancelled {
+            format!(
+                "⏹ Batch cancelled: {succeeded} of {reached} completed, {} task(s) left pending.",
+                self.tasks.len() - reached
+            )
+        } else {
+            format!("Batch finished: {succeeded} succeeded, {failed} failed.")
+        };
+        self.last_summary = Some((summary, !cancelled && failed == 0));
     }
 
     fn toolbar_section(&mut self, ui: &mut egui::Ui, running: bool) {
@@ -196,6 +209,16 @@ impl BatchTab {
                 ui.spinner();
                 if let Some(job) = &self.job {
                     ui.label(job.progress().message);
+                    if ui
+                        .button("⏹ Stop")
+                        .on_hover_text(
+                            "Stops the batch: the running task is cancelled too, \
+                             remaining tasks stay pending",
+                        )
+                        .clicked()
+                    {
+                        job.cancel();
+                    }
                 }
             }
         });
@@ -291,6 +314,9 @@ impl BatchTab {
         self.job = Some(Job::spawn("Starting batch...", move |reporter| {
             let mut outcomes = Vec::with_capacity(total);
             for (i, (par2, dir, task_type)) in tasks.into_iter().enumerate() {
+                if reporter.is_cancelled() {
+                    break;
+                }
                 #[allow(clippy::cast_precision_loss)] // progress percent; precision irrelevant
                 let done =
                     (i.min(u32::MAX as usize) as f32)
@@ -300,25 +326,37 @@ impl BatchTab {
                     format!("Task {}/{}: {}ing {}", i + 1, total, task_type.label(),
                         par2.display()),
                 );
-                let outcome = match task_type {
-                    BatchTaskType::Verify => {
-                        let result = verify::verify(&par2, &dir, &[]);
-                        TaskOutcome {
+                let task_result = match task_type {
+                    BatchTaskType::Verify => verify::verify(&par2, &dir, &[], reporter)
+                        .map(|result| TaskOutcome {
                             success: result.all_correct,
                             summary: result.summary,
-                        }
-                    }
-                    BatchTaskType::Repair => {
-                        let (_, repair_outcome) = repair::verify_then_repair(&par2, &dir, &[]);
-                        TaskOutcome {
+                        }),
+                    BatchTaskType::Repair => repair::verify_then_repair(&par2, &dir, &[], reporter)
+                        .map(|(_, repair_outcome)| TaskOutcome {
                             success: repair_outcome.success,
                             summary: repair_outcome.summary,
-                        }
-                    }
+                        }),
                 };
-                outcomes.push(outcome);
+                match task_result {
+                    Ok(outcome) => outcomes.push(outcome),
+                    // Stop the whole batch on cancellation; other errors were
+                    // already captured inside the outcome.
+                    Err(msg) => {
+                        outcomes.push(TaskOutcome {
+                            success: false,
+                            summary: format!("⏹ {msg}"),
+                        });
+                        break;
+                    }
+                }
             }
-            reporter.report(100.0, "Batch finished");
+            let message = if reporter.is_cancelled() {
+                "Batch cancelled"
+            } else {
+                "Batch finished"
+            };
+            reporter.report(100.0, message);
             outcomes
         }));
     }

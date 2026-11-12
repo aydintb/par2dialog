@@ -2,8 +2,10 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// Status of a single file in a PAR2 set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileStatus {
     /// File is intact.
     Ok,
@@ -27,7 +29,7 @@ impl std::fmt::Display for FileStatus {
 }
 
 /// A single file entry in a PAR2 set.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub status: FileStatus,
@@ -36,7 +38,7 @@ pub struct FileEntry {
 }
 
 /// Result of a verify operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifyOutcome {
     pub files: Vec<FileEntry>,
     pub all_correct: bool,
@@ -47,7 +49,7 @@ pub struct VerifyOutcome {
 }
 
 /// Result of a repair operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepairOutcome {
     pub success: bool,
     /// Number of blocks that were reconstructed.

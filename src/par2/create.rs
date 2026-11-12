@@ -1,16 +1,18 @@
 //! PAR2 creation via the `par2cmdline` subprocess.
 //!
 //! `rust-par2` cannot create PAR2 sets yet, so creation shells out to
-//! `par2 create` and streams its progress into the GUI.
+//! `par2 create` and streams its progress into the GUI. The subprocess is
+//! killable: setting the reporter's cancel flag stops the operation.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::{mpsc, OnceLock};
+use std::process::Command;
+use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::jobs::Reporter;
+use crate::jobs::{Reporter, CANCELLED};
+use crate::par2::proc::run_streaming;
 use crate::par2::types::{CreateConfig, RecoveryFileMode, RedundancySpec};
 
 /// Locate the `par2` binary.
@@ -106,7 +108,14 @@ fn build_args(config: &CreateConfig) -> Vec<String> {
 
 /// Run `par2 create` and report progress. Blocks until the subprocess exits;
 /// intended to be called from a [`crate::jobs::Job`] on a background thread.
-pub fn create(config: &CreateConfig, par2_path: Option<&str>, reporter: &Reporter) -> Result<String, String> {
+///
+/// The subprocess is killed when the reporter's cancel flag is set, in which
+/// case [`CANCELLED`] is returned.
+pub fn create(
+    config: &CreateConfig,
+    par2_path: Option<&str>,
+    reporter: &Reporter,
+) -> Result<String, String> {
     let cmdline = find_par2cmdline(par2_path).ok_or_else(|| {
         "par2cmdline not found in PATH. Please install par2cmdline first.".to_string()
     })?;
@@ -114,76 +123,31 @@ pub fn create(config: &CreateConfig, par2_path: Option<&str>, reporter: &Reporte
     let args = build_args(config);
     tracing::info!("Running: {} {}", cmdline.display(), args.join(" "));
 
-    let mut child = Command::new(&cmdline)
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Failed to start par2cmdline: {e}"))?;
-
-    // Drain stderr on its own thread so the child can never deadlock on a
-    // full stderr pipe while we are busy reading stdout.
-    let stderr_handle = child.stderr.take().map(spawn_stderr_drain);
+    let mut command = Command::new(&cmdline);
+    command.args(&args);
 
     // par2cmdline writes progress with \r line separators and never emits a
     // "Done: N%" marker; percentages appear in lines such as
     // "Constructing: 45.0%" / "Processing: 33.7%" / "Hashing: 12.3%".
     let progress_re = progress_regex();
+    let cancel = reporter.cancel_handle();
+    let mut last_pct = -1.0_f32;
+    let mut last_label = String::new();
 
-    if let Some(stdout) = child.stdout.take() {
-        let mut reader = stdout;
-        let mut buf: Vec<u8> = Vec::new();
-        let mut chunk = [0_u8; 4096];
-        let mut last_pct = -1.0_f32;
-        let mut last_label = String::new();
+    let result = run_streaming(&mut command, &cancel, &mut |line| {
+        emit_line(line, progress_re, &mut last_pct, &mut last_label, reporter);
+    })?;
 
-        loop {
-            let n = reader
-                .read(&mut chunk)
-                .map_err(|e| format!("Failed to read par2cmdline output: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-
-            // Split on both \n and \r; whatever remains (a partial line)
-            // stays in `buf` until the next read completes it.
-            while let Some(pos) = buf.iter().position(|&b| b == b'\n' || b == b'\r') {
-                let line: Vec<u8> = buf.drain(..=pos).collect();
-                emit_line(
-                    std::str::from_utf8(&line[..line.len() - 1]).unwrap_or_default(),
-                    progress_re,
-                    &mut last_pct,
-                    &mut last_label,
-                    reporter,
-                );
-            }
-        }
-        // Flush any trailing line that was not newline-terminated.
-        emit_line(
-            std::str::from_utf8(&buf).unwrap_or_default(),
-            progress_re,
-            &mut last_pct,
-            &mut last_label,
-            reporter,
-        );
+    if !result.success && cancel.load(Ordering::Relaxed) {
+        return Err(CANCELLED.to_string());
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("Failed to wait for par2cmdline: {e}"))?;
-
-    let stderr_text = stderr_handle
-        .and_then(|rx| rx.recv().ok())
-        .unwrap_or_default();
-
-    if status.success() {
+    if result.success {
         reporter.report(100.0, "PAR2 files created successfully!");
         Ok("PAR2 files created successfully!".to_string())
     } else {
-        let code = status.code().unwrap_or(-1);
-        let stderr_text = stderr_text.trim().to_string();
+        let code = result.code.unwrap_or(-1);
+        let stderr_text = result.stderr.trim().to_string();
         let detail = if stderr_text.is_empty() {
             String::new()
         } else {
@@ -227,31 +191,6 @@ fn emit_line(
         }
     }
     reporter.report((*last_pct).max(0.0), trimmed.to_string());
-}
-
-/// Read everything from `stderr` into a string, on its own thread.
-fn spawn_stderr_drain(stderr: std::process::ChildStderr) -> mpsc::Receiver<String> {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut reader = stderr;
-        let mut text = String::new();
-        let mut chunk = [0_u8; 4096];
-        loop {
-            let n = match reader.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => n,
-            };
-            text.push_str(std::str::from_utf8(&chunk[..n]).unwrap_or_default());
-            // Keep the buffer bounded; only the tail matters for errors.
-            if text.len() > 64 * 1024 {
-                let cut = text.len() - 32 * 1024;
-                let boundary = text[cut..].find('\n').map_or(cut, |i| cut + i + 1);
-                text.drain(..boundary);
-            }
-        }
-        let _ = tx.send(text);
-    });
-    rx
 }
 
 #[cfg(test)]

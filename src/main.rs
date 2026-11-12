@@ -9,6 +9,7 @@ mod tabs;
 mod theme;
 mod util;
 mod widgets;
+mod worker;
 
 use eframe::egui;
 use self_updater_helper::{run_update, UpdaterConfig};
@@ -38,6 +39,14 @@ fn real_main() -> eframe::Result<()> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Headless worker mode (`--par2-worker verify|repair ...`): the GUI uses
+    // this to run rust-par2 verify/repair in a killable subprocess. It must
+    // short-circuit before the updater and the GUI start.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = worker::handle_args(&args) {
+        std::process::exit(code);
+    }
+
     // Skip update check if we just self-updated (set in restart_process).
     let skip_update = std::env::var("PAR2DIALOG_SKIP_UPDATE").as_deref() == Ok("1");
 

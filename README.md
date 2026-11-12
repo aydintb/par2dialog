@@ -14,6 +14,7 @@ Par2Dialog provides a user-friendly interface for creating, verifying, and repai
 - Recursive directory scanning
 - Memory and thread limits for fine-tuned performance
 - Live progress tracking streamed from par2cmdline
+- Stoppable mid-run with the ⏹ Stop button (kills the par2 process)
 
 ### ✅ Verify
 - Check file integrity against PAR2 sets
@@ -21,17 +22,20 @@ Par2Dialog provides a user-friendly interface for creating, verifying, and repai
 - Detailed damage reports with block-level information
 - Support for extra files not in the original PAR2 set
 - Auto-discovery of related PAR2 set files
+- Stoppable mid-run with the ⏹ Stop button
 
 ### 🔧 Repair
 - Repair damaged or missing files using Reed-Solomon error correction
 - Feasibility check before starting repair
 - Shows available vs needed recovery blocks
 - Single verify pass shared between verify and repair (no redundant hashing)
+- Stoppable mid-run with the ⏹ Stop button (run Repair again if stopped while files were being rewritten)
 
 ### 📋 Batch
 - Queue multiple PAR2 operations
 - Sequential processing in the background (UI stays responsive)
 - One-click import of every PAR2 set found in a folder
+- Stoppable mid-run with the ⏹ Stop button (remaining tasks stay pending)
 - Summary report for all tasks
 
 ### ⚙️ Settings
@@ -161,8 +165,8 @@ Par2Dialog exposes all par2cmdline parameters through its UI:
 └─────────────────────────────────────┘
 ```
 
-- **Verify/Repair**: Uses [`rust-par2`](https://crates.io/crates/rust-par2) — a pure Rust, SIMD-accelerated PAR2 library
-- **Create**: Spawns `par2cmdline` as a subprocess (since rust-par2 doesn't support creation yet), streaming live progress
+- **Verify/Repair**: Uses [`rust-par2`](https://crates.io/crates/rust-par2) — a pure Rust, SIMD-accelerated PAR2 library. Since the library offers no cancellation hooks, these operations run inside a killable headless worker subprocess (the same binary with `--par2-worker`), which is what makes the ⏹ Stop button work
+- **Create**: Spawns `par2cmdline` as a subprocess (since rust-par2 doesn't support creation yet), streaming live progress — Stop kills that process
 - **Settings**: Serialized as JSON in the platform config directory (e.g. `~/.config/par2dialog/config.json` on Linux)
 
 ## License

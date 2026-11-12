@@ -27,11 +27,13 @@ pub struct RepairTab {
     pub par2_path: PathBuf,
     pub data_dir: PathBuf,
     pub extra_files: Vec<PathBuf>,
-    job: Option<Job<RepairJobResult>>,
+    job: Option<Job<Result<RepairJobResult, String>>>,
     /// Result of the last feasibility check: (message, positive).
     feasibility: Option<(String, bool)>,
     status_list: StatusList,
-    result_summary: Option<(String, bool)>,
+    /// Result summary: (message, `Some(positive)` for ok/error, `None` for a
+    /// cancelled run).
+    result_summary: Option<(String, Option<bool>)>,
 }
 
 impl Default for RepairTab {
@@ -59,7 +61,17 @@ impl RepairTab {
         }
         if let Some(result) = finished {
             self.job = None;
-            self.apply_job_result(result);
+            match result {
+                Ok(job_result) => self.apply_job_result(job_result),
+                Err(msg) => {
+                    self.status_list.files.clear();
+                    self.result_summary = Some(if msg == crate::jobs::CANCELLED {
+                        (format!("⏹ {msg}"), None)
+                    } else {
+                        (format!("❌ {msg}"), Some(false))
+                    });
+                }
+            }
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -101,7 +113,7 @@ impl RepairTab {
                 } else {
                     format!("❌ {}", repair.summary)
                 };
-                self.result_summary = Some((message, repair.success));
+                self.result_summary = Some((message, Some(repair.success)));
             }
         }
     }
@@ -184,6 +196,19 @@ impl RepairTab {
             if self.is_running() {
                 ui.spinner();
                 ui.label("Working...");
+                if ui
+                    .button("⏹ Stop")
+                    .on_hover_text(
+                        "Stops immediately. If it stopped while a file was being \
+                         repaired, simply run Repair again to finish — recovery data \
+                         is never modified.",
+                    )
+                    .clicked()
+                {
+                    if let Some(job) = &self.job {
+                        job.cancel();
+                    }
+                }
             }
         });
 
@@ -208,11 +233,12 @@ impl RepairTab {
 
         if let Some((summary, positive)) = &self.result_summary {
             ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new(summary)
-                    .size(12.0)
-                    .color(color_for(*positive)),
-            );
+            let color = match positive {
+                Some(true) => egui::Color32::GREEN,
+                Some(false) => egui::Color32::RED,
+                None => ui.visuals().warn_fg_color,
+            };
+            ui.label(egui::RichText::new(summary).size(12.0).color(color));
         }
         if !self.status_list.files.is_empty() {
             ui.add_space(6.0);
@@ -231,8 +257,7 @@ impl RepairTab {
 
         self.feasibility = None;
         self.job = Some(Job::spawn("Checking repair feasibility...", move |reporter| {
-            reporter.report(30.0, "Verifying files...");
-            let outcome = repair::check_feasibility(&par2, &dir, &extras);
+            let outcome = repair::check_feasibility(&par2, &dir, &extras, reporter)?;
             let message = if outcome.all_correct {
                 "All files are intact. No repair needed.".to_string()
             } else if outcome.repair_possible {
@@ -248,11 +273,11 @@ impl RepairTab {
             };
             let positive = outcome.all_correct || outcome.repair_possible;
             reporter.report(100.0, message.clone());
-            RepairJobResult::Feasibility {
+            Ok(RepairJobResult::Feasibility {
                 verify: outcome,
                 message,
                 positive,
-            }
+            })
         }));
     }
 
@@ -265,14 +290,12 @@ impl RepairTab {
         self.status_list.files.clear();
         self.feasibility = None;
         self.job = Some(Job::spawn("Verifying before repair...", move |reporter| {
-            reporter.report(10.0, "Verifying files...");
             let (verify_outcome, repair_outcome) =
-                repair::verify_then_repair(&par2, &dir, &extras);
-            reporter.report(100.0, repair_outcome.summary.clone());
-            RepairJobResult::Repair {
+                repair::verify_then_repair(&par2, &dir, &extras, reporter)?;
+            Ok(RepairJobResult::Repair {
                 verify: verify_outcome,
                 repair: repair_outcome,
-            }
+            })
         }));
     }
 }

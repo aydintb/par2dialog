@@ -24,7 +24,7 @@ pub struct VerifyTab {
     pub par2_path: PathBuf,
     pub data_dir: PathBuf,
     pub extra_files: Vec<PathBuf>,
-    job: Option<Job<VerifyOutcome>>,
+    job: Option<Job<Result<VerifyOutcome, String>>>,
     status_list: StatusList,
     result_summary: Option<String>,
     /// PAR2 path the current (or last) result belongs to, to clear stale results.
@@ -56,11 +56,24 @@ impl VerifyTab {
                 finished = job.take_result();
             }
         }
-        if let Some(outcome) = finished {
+        if let Some(result) = finished {
             self.job = None;
-            self.last_result_par2.clone_from(&self.par2_path);
-            self.status_list.files.clone_from(&outcome.files);
-            self.result_summary = Some(outcome.summary);
+            match result {
+                Ok(outcome) => {
+                    self.last_result_par2.clone_from(&self.par2_path);
+                    self.status_list.files = outcome.files;
+                    self.result_summary = Some(outcome.summary);
+                }
+                Err(msg) => {
+                    self.status_list.files.clear();
+                    self.last_result_par2.clear();
+                    self.result_summary = Some(if msg == crate::jobs::CANCELLED {
+                        format!("⏹ {msg}")
+                    } else {
+                        format!("❌ {msg}")
+                    });
+                }
+            }
         }
 
         // Stale results (paths changed since the verify ran) are misleading.
@@ -162,6 +175,15 @@ impl VerifyTab {
             if self.is_running() {
                 ui.spinner();
                 ui.label("Verifying...");
+                if ui
+                    .button("⏹ Stop")
+                    .on_hover_text("Stop the verification (the hashing process is killed)")
+                    .clicked()
+                {
+                    if let Some(job) = &self.job {
+                        job.cancel();
+                    }
+                }
             }
         });
 
@@ -224,9 +246,8 @@ impl VerifyTab {
         self.result_summary = None;
         self.status_list.files.clear();
         self.last_result_par2.clear();
-        self.job = Some(Job::spawn("Parsing PAR2 file...", move |reporter| {
-            reporter.report(20.0, "Verifying files...");
-            verify::verify(&par2, &dir, &extras)
+        self.job = Some(Job::spawn("Reading PAR2 index...", move |reporter| {
+            verify::verify(&par2, &dir, &extras, reporter)
         }));
     }
 }

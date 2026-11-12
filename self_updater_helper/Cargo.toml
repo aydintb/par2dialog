@@ -5,4 +5,6 @@ edition = "2021"
 description = "A helper library for self-updating Rust binaries via GitHub releases"
 
 [dependencies]
-self_update = "0.39"
+# rustls instead of native-tls: avoids the OpenSSL C library entirely, which
+# breaks builds on systems shipping OpenSSL >= 4.0.
+self_update = { version = "0.39", default-features = false, features = ["rustls"] }

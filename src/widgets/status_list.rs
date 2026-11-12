@@ -31,14 +31,14 @@ impl StatusList {
 
         // Summary bar
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("{} files total", self.files.len())).strong());
+            ui.label(egui::RichText::new(format!("{total} files total", total = self.files.len())).strong());
             ui.separator();
-            ui.label(egui::RichText::new(format!("✅ {} OK", ok_count)).color(egui::Color32::GREEN));
+            ui.label(egui::RichText::new(format!("✅ {ok_count} OK")).color(egui::Color32::GREEN));
             if damaged_count > 0 {
-                ui.label(egui::RichText::new(format!("❌ {} damaged", damaged_count)).color(egui::Color32::RED));
+                ui.label(egui::RichText::new(format!("❌ {damaged_count} damaged")).color(egui::Color32::RED));
             }
             if missing_count > 0 {
-                ui.label(egui::RichText::new(format!("❓ {} missing", missing_count)).color(egui::Color32::YELLOW));
+                ui.label(egui::RichText::new(format!("❓ {missing_count} missing")).color(egui::Color32::YELLOW));
             }
         });
 
@@ -47,7 +47,7 @@ impl StatusList {
         // File list
         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
             for file in &self.files {
-                ui.horizontal(|ui| {
+                let row = ui.horizontal(|ui| {
                     let (icon, color) = match file.status {
                         FileStatus::Ok => ("✅", egui::Color32::GREEN),
                         FileStatus::Damaged => ("❌", egui::Color32::RED),
@@ -66,6 +66,8 @@ impl StatusList {
                         }
                     }
                 });
+                row.response
+                    .on_hover_text(file.path.to_string_lossy().to_string());
             }
         });
     }

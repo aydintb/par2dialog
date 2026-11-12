@@ -2,6 +2,8 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 mod app;
+mod app_config;
+mod jobs;
 mod par2;
 mod tabs;
 mod theme;
@@ -31,13 +33,13 @@ fn real_main() -> eframe::Result<()> {
     eframe::run_native(
         &app_title,
         native_options,
-        Box::new(|cc| Ok(Box::new(app::ParParApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(app::Par2DialogApp::new(cc)))),
     )
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Skip update check if we just self-updated (set in restart_process)
-    let skip_update = std::env::var("PAR2DIALOG_SKIP_UPDATE") == Ok("1".to_string());
+    // Skip update check if we just self-updated (set in restart_process).
+    let skip_update = std::env::var("PAR2DIALOG_SKIP_UPDATE").as_deref() == Ok("1");
 
     if !skip_update {
         let config = UpdaterConfig {

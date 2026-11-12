@@ -1,77 +1,108 @@
-use std::path::PathBuf;
+//! PAR2 verification using `rust-par2` (pure Rust, SIMD-accelerated).
 
-use crate::par2::types::{FileEntry, FileStatus, VerifyResult};
+use std::path::{Path, PathBuf};
 
-fn human_size(bytes: u64) -> String {
-    if bytes < 1024 { format!("{bytes} B") }
-    else if bytes < 1024 * 1024 { format!("{:.1} KB", bytes as f64 / 1024.0) }
-    else if bytes < 1024 * 1024 * 1024 { format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)) }
-    else { format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0)) }
+use rust_par2::{Par2FileSet, VerifyResult as LibVerifyResult};
+use crate::par2::types::{FileEntry, FileStatus, VerifyOutcome};
+use crate::util;
+
+/// A completed verification, keeping both the GUI-friendly outcome and the
+/// library's own data so a subsequent repair does not need to verify again.
+pub struct FullVerify {
+    pub outcome: VerifyOutcome,
+    /// Present when the PAR2 file parsed successfully.
+    pub parsed: Option<(Par2FileSet, LibVerifyResult)>,
 }
 
-pub fn verify(par2_path: &PathBuf, data_dir: &PathBuf, extra_files: &[PathBuf]) -> VerifyResult {
-    let mut files = Vec::new();
-
-    match rust_par2::parse(par2_path) {
-        Ok(file_set) => {
-            // rust_par2::verify returns VerifyResult directly, not Result
-            let result = rust_par2::verify(&file_set, data_dir);
-            let summary = format!("{}", result);
-
-            for vf in &result.intact {
-                files.push(FileEntry {
-                    path: data_dir.join(&vf.filename),
-                    status: FileStatus::Ok,
-                    damage_detail: Some(human_size(vf.size)),
-                });
-            }
-
-            for df in &result.damaged {
-                files.push(FileEntry {
-                    path: data_dir.join(&df.filename),
-                    status: FileStatus::Damaged,
-                    damage_detail: Some(format!(
-                        "{}/{} blocks damaged",
-                        df.damaged_block_count, df.total_block_count
-                    )),
-                });
-            }
-
-            for mf in &result.missing {
-                files.push(FileEntry {
-                    path: data_dir.join(&mf.filename),
-                    status: FileStatus::Missing,
-                    damage_detail: Some(format!("expected {} bytes", mf.expected_size)),
-                });
-            }
-
-            for extra in extra_files {
-                let already_listed = files.iter().any(|e| e.path == *extra);
-                if !already_listed {
-                    files.push(FileEntry {
-                        path: extra.clone(),
-                        status: FileStatus::Unknown,
-                        damage_detail: Some("Not in PAR2 set".to_string()),
-                    });
-                }
-            }
-
-            VerifyResult {
-                files,
-                all_correct: result.all_correct(),
-                repair_possible: result.repair_possible,
-                blocks_available: u64::from(result.recovery_blocks_available),
-                blocks_needed: u64::from(result.blocks_needed()),
-                summary,
-            }
+/// Verify the data files in `data_dir` against the PAR2 set at `par2_path`,
+/// running the (expensive) verification pass exactly once.
+pub fn verify_full(par2_path: &Path, data_dir: &Path, extra_files: &[PathBuf]) -> FullVerify {
+    let file_set = match rust_par2::parse(par2_path) {
+        Ok(file_set) => file_set,
+        Err(e) => {
+            return FullVerify {
+                outcome: VerifyOutcome {
+                    files: Vec::new(),
+                    all_correct: false,
+                    repair_possible: false,
+                    blocks_available: 0,
+                    blocks_needed: 0,
+                    summary: format!("Failed to parse PAR2 file: {e}"),
+                },
+                parsed: None,
+            };
         }
-        Err(e) => VerifyResult {
-            files,
-            all_correct: false,
-            repair_possible: false,
-            blocks_available: 0,
-            blocks_needed: 0,
-            summary: format!("Failed to parse PAR2 file: {e}"),
-        },
+    };
+
+    let result = rust_par2::verify(&file_set, data_dir);
+    let outcome = outcome_from(&result, data_dir, extra_files);
+
+    FullVerify {
+        outcome,
+        parsed: Some((file_set, result)),
+    }
+}
+
+/// Convenience wrapper that discards the library-side verify data.
+pub fn verify(par2_path: &Path, data_dir: &Path, extra_files: &[PathBuf]) -> VerifyOutcome {
+    verify_full(par2_path, data_dir, extra_files).outcome
+}
+
+/// Convert the library's verify result into our display-friendly outcome.
+fn outcome_from(
+    result: &LibVerifyResult,
+    data_dir: &Path,
+    extra_files: &[PathBuf],
+) -> VerifyOutcome {
+    let summary = result.to_string();
+
+    let mut files = Vec::with_capacity(
+        result.intact.len() + result.damaged.len() + result.missing.len(),
+    );
+
+    for vf in &result.intact {
+        files.push(FileEntry {
+            path: data_dir.join(&vf.filename),
+            status: FileStatus::Ok,
+            damage_detail: Some(util::human_size(vf.size)),
+        });
+    }
+
+    for df in &result.damaged {
+        files.push(FileEntry {
+            path: data_dir.join(&df.filename),
+            status: FileStatus::Damaged,
+            damage_detail: Some(format!(
+                "{}/{} blocks damaged",
+                df.damaged_block_count, df.total_block_count
+            )),
+        });
+    }
+
+    for mf in &result.missing {
+        files.push(FileEntry {
+            path: data_dir.join(&mf.filename),
+            status: FileStatus::Missing,
+            damage_detail: Some(format!("expected {} bytes", mf.expected_size)),
+        });
+    }
+
+    for extra in extra_files {
+        if !files.iter().any(|e| e.path == *extra) {
+            files.push(FileEntry {
+                path: extra.clone(),
+                status: FileStatus::Unknown,
+                damage_detail: Some("Not in PAR2 set".to_string()),
+            });
+        }
+    }
+
+    VerifyOutcome {
+        files,
+        all_correct: result.all_correct(),
+        repair_possible: result.repair_possible,
+        blocks_available: result.recovery_blocks_available,
+        blocks_needed: result.blocks_needed(),
+        summary,
     }
 }

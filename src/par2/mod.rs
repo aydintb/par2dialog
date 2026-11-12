@@ -1,4 +1,7 @@
+pub mod create;
+pub mod repair;
 pub mod types;
 pub mod verify;
-pub mod repair;
-pub mod create;
+
+#[cfg(test)]
+mod integration_tests;

@@ -6,8 +6,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::Ordering;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 
@@ -120,6 +121,17 @@ pub fn create(
         "par2cmdline not found in PATH. Please install par2cmdline first.".to_string()
     })?;
 
+    // par2cmdline refuses to overwrite existing PAR2 files: it exits with
+    // code 3 and prints the error only to stderr, leaving stdout empty. Fail
+    // fast with a clear message instead of relying on that.
+    if config.output_path.exists() {
+        return Err(format!(
+            "Output file already exists: {}. Delete it or choose another name — \
+             par2cmdline does not overwrite existing PAR2 files.",
+            config.output_path.display()
+        ));
+    }
+
     let args = build_args(config);
     tracing::info!("Running: {} {}", cmdline.display(), args.join(" "));
 
@@ -134,9 +146,44 @@ pub fn create(
     let mut last_pct = -1.0_f32;
     let mut last_label = String::new();
 
+    // Heartbeat: par2cmdline can stay silent for several seconds (huge input
+    // scans, slow custom binaries). Keep reporting liveness so the UI never
+    // appears stuck on the initial "Starting par2cmdline..." message.
+    let started = Instant::now();
+    let last_output = Arc::new(Mutex::new(Instant::now()));
+    let heartbeat_done = Arc::new(AtomicBool::new(false));
+    {
+        let last_output = Arc::clone(&last_output);
+        let heartbeat_done = Arc::clone(&heartbeat_done);
+        let cancel_watcher = Arc::clone(&cancel);
+        let heartbeat_reporter = reporter.clone();
+        std::thread::spawn(move || {
+            while !heartbeat_done.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(250));
+                if heartbeat_done.load(Ordering::Relaxed)
+                    || cancel_watcher.load(Ordering::Relaxed)
+                {
+                    break;
+                }
+                let silent_for = last_output.lock().unwrap().elapsed();
+                if silent_for > Duration::from_secs(3) {
+                    heartbeat_reporter.report_keep_progress(format!(
+                        "par2cmdline still running ({}s elapsed)…",
+                        started.elapsed().as_secs()
+                    ));
+                }
+            }
+        });
+    }
+
     let result = run_streaming(&mut command, &cancel, &mut |line| {
+        *last_output.lock().unwrap() = Instant::now();
         emit_line(line, progress_re, &mut last_pct, &mut last_label, reporter);
-    })?;
+    });
+
+    // Stop the heartbeat before reporting the final state.
+    heartbeat_done.store(true, Ordering::Relaxed);
+    let result = result?;
 
     if !result.success && cancel.load(Ordering::Relaxed) {
         return Err(CANCELLED.to_string());

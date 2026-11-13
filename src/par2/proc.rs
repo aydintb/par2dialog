@@ -55,10 +55,12 @@ pub fn run_streaming(
         .map(spawn_stderr_drain);
 
     // Watcher thread: kill the child when cancellation is requested. It never
-    // reaps the child — only the main thread does.
+    // reaps the child — only the main thread does. It runs until the child
+    // has been reaped (`done` is set below), so Stop works for the whole
+    // lifetime of the process.
+    let done = Arc::new(AtomicBool::new(false));
     {
         let child = Arc::clone(&child);
-        let done = Arc::new(AtomicBool::new(false));
         let done_watcher = Arc::clone(&done);
         let cancel_watcher = Arc::clone(cancel);
         std::thread::spawn(move || {
@@ -86,11 +88,22 @@ pub fn run_streaming(
         match guard.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {}
-            Err(e) => return Err(format!("failed to wait for process: {e}")),
+            Err(e) => {
+                // Rare failure path: stop the watcher, best-effort kill the
+                // child so it cannot linger unattended.
+                drop(guard);
+                let _ = child.lock().unwrap().kill();
+                done.store(true, Ordering::Relaxed);
+                return Err(format!("failed to wait for process: {e}"));
+            }
         }
         drop(guard);
         std::thread::sleep(Duration::from_millis(25));
     };
+
+    // Let the watcher thread exit. From here on the child is reaped and
+    // cannot be (or need to be) killed any more.
+    done.store(true, Ordering::Relaxed);
 
     let stderr = stderr_rx.and_then(|rx| rx.recv().ok()).unwrap_or_default();
 

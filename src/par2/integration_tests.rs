@@ -111,6 +111,106 @@ mod tests {
     }
 
     #[test]
+    fn create_streams_live_progress_from_the_real_binary() {
+        use std::io::Write as _;
+
+        in_process_mode();
+        if !par2_available() {
+            eprintln!("skipping: par2 not on PATH");
+            return;
+        }
+
+        let dir = temp_dir("liveprogress");
+        // ~120 MB of zeros: the run lasts long enough to observe live output.
+        let payload_path = dir.join("payload.bin");
+        let zeros = vec![0_u8; 1_000_000];
+        let mut file = fs::File::create(&payload_path).unwrap();
+        for _ in 0..120 {
+            file.write_all(&zeros).unwrap();
+        }
+        drop(file);
+
+        // Exactly what the GUI does (create_tab::start_creation).
+        let initial = "Starting par2cmdline...";
+        let config = test_config(&dir);
+        let job = Job::spawn(initial, move |reporter| {
+            create::create(&config, None, reporter)
+        });
+
+        let mut messages: Vec<String> = Vec::new();
+        let mut max_pct = 0.0_f32;
+        let mut last = String::new();
+        while job.is_running() {
+            let progress = job.progress();
+            max_pct = max_pct.max(progress.pct);
+            if progress.message != last {
+                messages.push(progress.message.clone());
+                last = progress.message;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let result = job.take_result().expect("create job finished");
+
+        assert!(
+            result.is_ok(),
+            "create should succeed: {result:?}; messages seen: {messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m != initial),
+            "create must replace the initial message with live output; \
+             only saw: {messages:?}"
+        );
+        assert!(
+            max_pct > 0.0,
+            "create must report a progress percentage, only saw: {messages:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_fails_fast_when_output_files_already_exist() {
+        in_process_mode();
+        if !par2_available() {
+            eprintln!("skipping: par2 not on PATH");
+            return;
+        }
+
+        let dir = temp_dir("overwrite");
+        fs::write(dir.join("payload.bin"), b"overwrite probe").unwrap();
+
+        // First run creates the set.
+        let config = test_config(&dir);
+        let job = Job::spawn("creating...", move |reporter| {
+            create::create(&config, None, reporter)
+        });
+        while job.is_running() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(job.take_result().unwrap().is_ok());
+
+        // Second run over the existing files must fail immediately — never
+        // hang (par2cmdline exits with code 3 and only writes to stderr).
+        let started = std::time::Instant::now();
+        let config = test_config(&dir);
+        let job = Job::spawn("Starting par2cmdline...", move |reporter| {
+            create::create(&config, None, reporter)
+        });
+        while job.is_running() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let result = job.take_result().expect("create job finished");
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        let error = result.expect_err("recreating over existing files must fail");
+        assert!(
+            error.contains("already exists"),
+            "error should explain the existing-output problem: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn verify_detects_intact_files() {
         in_process_mode();
         if !par2_available() {

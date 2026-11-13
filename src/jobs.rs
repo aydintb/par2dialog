@@ -40,11 +40,22 @@ pub struct Reporter {
 }
 
 impl Reporter {
+    /// Standalone reporter (worker-subprocess mode, tests): owns its state.
     fn new(worker_mode: bool) -> Self {
         Self {
             progress: Arc::new(Mutex::new(Progress::new(""))),
             cancel: Arc::new(AtomicBool::new(false)),
             worker_mode,
+        }
+    }
+
+    /// Reporter wired to a [`Job`]'s shared state, so everything the job
+    /// thread reports is visible through `Job::progress()`.
+    fn for_job(progress: Arc<Mutex<Progress>>, cancel: Arc<AtomicBool>) -> Self {
+        Self {
+            progress,
+            cancel,
+            worker_mode: false,
         }
     }
 
@@ -59,6 +70,18 @@ impl Reporter {
         let mut progress = self.progress.lock().unwrap();
         progress.pct = pct.clamp(0.0, 100.0);
         progress.message = message;
+    }
+
+    /// Report a message while keeping the current percentage — used for
+    /// liveness updates (heartbeats) that must not move the progress bar.
+    pub fn report_keep_progress(&self, message: impl Into<String>) {
+        let message = message.into();
+        if self.worker_mode {
+            let pct = self.progress.lock().unwrap().pct;
+            println!("PROGRESS\t{pct:.1}\t{message}");
+            return;
+        }
+        self.progress.lock().unwrap().message = message;
     }
 
     /// Whether the UI requested cancellation of this job.
@@ -104,9 +127,11 @@ impl<T: Send + 'static> Job<T> {
         let progress = Arc::new(Mutex::new(Progress::new(message)));
         let finished = Arc::new(AtomicBool::new(false));
         let result = Arc::new(Mutex::new(None));
+        let cancel = Arc::new(AtomicBool::new(false));
 
-        let reporter = Reporter::new(false);
-        let cancel = Arc::clone(&reporter.cancel);
+        // The reporter must write into THIS job's shared state; otherwise the
+        // UI would keep showing the initial message forever.
+        let reporter = Reporter::for_job(Arc::clone(&progress), Arc::clone(&cancel));
         let finished_thread = Arc::clone(&finished);
         let result_thread = Arc::clone(&result);
 
